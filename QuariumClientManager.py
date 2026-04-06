@@ -1,9 +1,15 @@
 import os
+import sys
 import re
 import tkinter as tk
 from tkinter import ttk, messagebox
 import sqlite3
 from datetime import datetime
+
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 class ClientManager:
     def __init__(self, root, current_user="Unknown"):
@@ -14,7 +20,7 @@ class ClientManager:
             self.root.geometry("1000x700")
 
         # Client database
-        self.db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'clients.db')
+        self.db_path = os.path.join(BASE_DIR, 'clients.db')
 
         self.init_db()
         self.create_ui()

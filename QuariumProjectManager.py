@@ -1,4 +1,5 @@
 import os
+import sys
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import sqlite3
@@ -7,6 +8,11 @@ import json
 import math
 import re
 from tkinter import filedialog
+
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 try:
     from reportlab.lib.pagesizes import A4  # type: ignore
@@ -68,11 +74,11 @@ class ProjectManager:
             self.root.title("Quarium Project Manager")
             self.root.geometry("1200x800")
 
-        self.project_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'projects.db')
-        self.client_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'clients.db')
-        self.service_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'services.db')
-        self.stock_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'stock.db')
-        self.users_json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'users.json')
+        self.project_db_path = os.path.join(BASE_DIR, 'projects.db')
+        self.client_db_path = os.path.join(BASE_DIR, 'clients.db')
+        self.service_db_path = os.path.join(BASE_DIR, 'services.db')
+        self.stock_db_path = os.path.join(BASE_DIR, 'stock.db')
+        self.users_json_path = os.path.join(BASE_DIR, 'users.json')
 
         self.init_db()
         self.create_ui()
@@ -338,7 +344,7 @@ class ProjectManager:
         self.update_total_cost()
         
     def load_settings(self):
-        settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'settings.json')
+        settings_path = os.path.join(BASE_DIR, 'settings.json')
         self.settings = {}
         if os.path.exists(settings_path):
             try:
@@ -1182,7 +1188,7 @@ class ProjectManager:
         notes_text.pack(fill="x", padx=5)
         if notes: notes_text.insert("1.0", notes)
 
-        settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'settings.json')
+        settings_path = os.path.join(BASE_DIR, 'settings.json')
         settings = {}
         if os.path.exists(settings_path):
             try:
@@ -1277,7 +1283,7 @@ class ProjectManager:
         title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, spaceAfter=12, alignment=1)
         normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName='Helvetica', fontSize=10, spaceAfter=2)
         
-        settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'settings.json')
+        settings_path = os.path.join(BASE_DIR, 'settings.json')
         settings = {}
         if os.path.exists(settings_path):
             try:
@@ -1287,9 +1293,9 @@ class ProjectManager:
         NumberedCanvas.footer_text = settings.get("footer_text", "Quarium Consultoria em Biologia Analítica, Ltda. | Campinas, SP | Email: quarium.bio@gmail.com")
         
         est_logo_file = settings.get("estimate_logo", "QLogo.png")
-        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), est_logo_file)
+        logo_path = os.path.join(BASE_DIR, est_logo_file)
         if not os.path.exists(logo_path):
-            logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'QLogo.png')
+            logo_path = os.path.join(BASE_DIR, 'QLogo.png')
         if os.path.exists(logo_path): logo = RLImage(logo_path, width=3*cm, height=3*cm, kind='proportional')
         else: logo = Paragraph("<b>[Logo Missing]</b>", normal_style)
             

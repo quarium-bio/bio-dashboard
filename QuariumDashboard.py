@@ -12,6 +12,7 @@ from tkinter import filedialog
 import sqlite3
 import urllib.request
 import urllib.error
+import sys
 
 # Import the application classes
 from QuariumClientManager import ClientManager
@@ -38,6 +39,11 @@ except ImportError:
     InvalidToken = Exception
     hashes = MagicMock()
     PBKDF2HMAC = MagicMock()
+
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 CURRENT_VERSION = "1.0.0"
 UPDATE_URL = "https://raw.githubusercontent.com/quarium-bio/bio-dashboard/main/version.json" # Change to your actual raw URL
@@ -417,10 +423,10 @@ class QuariumDashboard:
                 if getattr(self, 'stop_poller', False): break
                 try:
                     ld = self.drive_sync.read_lock()  # type: ignore
-                        if not ld or ld.get('owner') != self.current_user:
-                            self.is_owner = False
-                            self.root.after(0, self._notify_lock_lost)
-                            break
+                    if not ld or ld.get('owner') != self.current_user:
+                        self.is_owner = False
+                        self.root.after(0, self._notify_lock_lost)
+                        break
                     if ld.get('request_by') and not ld.get('response'):
                         self.root.after(0, self.handle_lock_request, ld['request_by'])
                         continue
@@ -548,7 +554,7 @@ class QuariumDashboard:
         
         self.create_ui()
         
-        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'QLogo.png')
+        logo_path = os.path.join(BASE_DIR, 'QLogo.png')
         if os.path.exists(logo_path):
             try:
                 icon_img = tk.PhotoImage(file=logo_path)
@@ -647,7 +653,7 @@ class QuariumDashboard:
         sidebar.grid(row=0, column=0, sticky="ns")
         
         # Load and display logo
-        logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'QLogo.png')
+        logo_path = os.path.join(BASE_DIR, 'QLogo.png')
         if os.path.exists(logo_path):
             try:
                 from PIL import Image, ImageTk

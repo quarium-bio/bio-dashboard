@@ -1,4 +1,5 @@
 import os
+import sys
 import sqlite3
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -11,6 +12,11 @@ except ImportError:
 
 DB_NAME = 'stock.db'
 
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 class CompositeStockManager:
     def __init__(self, root, is_embedded=False, current_user="Unknown"):
         self.root = root
@@ -20,7 +26,7 @@ class CompositeStockManager:
             self.root.title('Composite Item Creator')
             self.root.geometry('1000x700')
 
-        self.db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), DB_NAME)
+        self.db_path = os.path.join(BASE_DIR, DB_NAME)
         self.conn = sqlite3.connect(self.db_path)
         self.cursor = self.conn.cursor()
         self.setup_db()
