@@ -249,6 +249,8 @@ class QuariumDashboard:
         tut_win = tk.Toplevel(self.root)
         tut_win.title("Tutorial: credentials.json")
         tut_win.geometry("600x500")
+        tut_win.transient(self.root)
+        tut_win.grab_set()
         
         txt = tk.Text(tut_win, wrap="word", padx=15, pady=15, font=("Helvetica", 10))
         txt.pack(fill="both", expand=True)
@@ -257,6 +259,8 @@ class QuariumDashboard:
 
         txt.insert("1.0", tutorial_content)
         txt.config(state="disabled")
+        
+        ttk.Button(tut_win, text="Close", command=tut_win.destroy).pack(pady=10)
 
     def show_login_dialog(self):
         login_win = tk.Toplevel(self.root)

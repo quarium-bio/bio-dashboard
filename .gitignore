@@ -10,7 +10,10 @@ users.json
 settings.json
 temp_lock.json
 QLogo.png
+EstimateLogo.png
 
 # Python caches
 __pycache__/
 *.pyc
+build/
+dist/
