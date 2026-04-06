@@ -2,7 +2,13 @@ import os
 import io
 import json
 import threading
+import sys
 from datetime import datetime
+
+if getattr(sys, 'frozen', False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 try:
     from google.oauth2.credentials import Credentials
@@ -10,7 +16,7 @@ try:
     from google.auth.transport.requests import Request
     from google.auth.exceptions import RefreshError
     from googleapiclient.discovery import build
-    from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
+    from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload, MediaIoBaseUpload
     GOOGLE_API_AVAILABLE = True
 except ImportError:
     from unittest.mock import MagicMock
@@ -22,6 +28,7 @@ except ImportError:
     build = MagicMock()
     MediaIoBaseDownload = MagicMock()
     MediaFileUpload = MagicMock()
+    MediaIoBaseUpload = MagicMock()
 
 SCOPES = ['https://www.googleapis.com/auth/drive.appdata']
 
@@ -36,24 +43,26 @@ class DriveSyncManager:
         self.authenticate()
 
     def authenticate(self):
+        token_path = os.path.join(BASE_DIR, 'token.json')
+        creds_path = os.path.join(BASE_DIR, 'credentials.json')
         with self.api_lock:
-            if os.path.exists('token.json'):
-                self.creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+            if os.path.exists(token_path):
+                self.creds = Credentials.from_authorized_user_file(token_path, SCOPES)
             if not self.creds or not self.creds.valid:
                 if self.creds and self.creds.expired and self.creds.refresh_token:
                     try:
                         self.creds.refresh(Request())
                     except RefreshError:
                         self.creds = None
-                        if os.path.exists('token.json'):
-                            os.remove('token.json')
+                        if os.path.exists(token_path):
+                            os.remove(token_path)
                 
                 if not self.creds or not self.creds.valid:
-                    if not os.path.exists('credentials.json'):
-                        raise FileNotFoundError("credentials.json not found. Please obtain OAuth 2.0 client ID from Google Cloud Console.")
-                    flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
+                    if not os.path.exists(creds_path):
+                        raise FileNotFoundError(f"{creds_path} not found. Please obtain OAuth 2.0 client ID from Google Cloud Console.")
+                    flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
                     self.creds = flow.run_local_server(port=0)
-                    with open('token.json', 'w') as token:
+                    with open(token_path, 'w') as token:
                         token.write(self.creds.to_json())
             self.service = build('drive', 'v3', credentials=self.creds)
 
@@ -90,16 +99,16 @@ class DriveSyncManager:
     def write_lock(self, lock_data):
         with self.api_lock:
             try:
-                with open('temp_lock.json', 'w') as f: json.dump(lock_data, f)
+                lock_bytes = json.dumps(lock_data).encode('utf-8')
+                fh = io.BytesIO(lock_bytes)
                 files = self.list_appdata_files()
-                media = MediaFileUpload('temp_lock.json', mimetype='application/json', resumable=True)
+                media = MediaIoBaseUpload(fh, mimetype='application/json', resumable=True)
                 if 'lock.json' in files:
                     file_id = files['lock.json']['id'] if isinstance(files['lock.json'], dict) else files['lock.json']
                     self.service.files().update(fileId=file_id, media_body=media).execute()  # type: ignore
                 else:
                     file_metadata = {'name': 'lock.json', 'parents': ['appDataFolder']}
                     self.service.files().create(body=file_metadata, media_body=media, fields='id').execute()  # type: ignore
-                os.remove('temp_lock.json')
             except Exception as e: print("Write lock error:", e)
 
     def download_file(self, file_id, file_path):
@@ -123,7 +132,8 @@ class DriveSyncManager:
             files_in_drive = self.list_appdata_files()
             for name in filenames:
                 if name in files_in_drive:
-                    self.download_file(files_in_drive[name]['id'], name)
+                    file_path = os.path.join(BASE_DIR, name)
+                    self.download_file(files_in_drive[name]['id'], file_path)
                     self.file_versions[name] = files_in_drive[name]['modifiedTime']
 
     def sync_up(self, filenames, current_user="Unknown"):
@@ -131,7 +141,8 @@ class DriveSyncManager:
             files_in_drive = self.list_appdata_files()
             conflicts = []
             for name in filenames:
-                if os.path.exists(name):
+                file_path = os.path.join(BASE_DIR, name)
+                if os.path.exists(file_path):
                     drive_file = files_in_drive.get(name)
                     if drive_file:
                         cloud_time = drive_file.get('modifiedTime')
@@ -140,10 +151,10 @@ class DriveSyncManager:
                             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                             clean_user = "".join(c for c in current_user if c.isalnum()) or "Unknown"
                             conflict_name = f"{name.split('.')[0]}_conflict_{clean_user}_{timestamp}.{name.split('.')[-1]}"
-                            self.upload_file(name, conflict_name, None)
+                            self.upload_file(file_path, conflict_name, None)
                             conflicts.append(name)
                             continue
-                        self.upload_file(name, name, drive_file['id'])
+                        self.upload_file(file_path, name, drive_file['id'])
                     else:
-                        self.upload_file(name, name, None)
+                        self.upload_file(file_path, name, None)
             return conflicts

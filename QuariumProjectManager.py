@@ -79,6 +79,7 @@ class ProjectManager:
         self.service_db_path = os.path.join(BASE_DIR, 'services.db')
         self.stock_db_path = os.path.join(BASE_DIR, 'stock.db')
         self.users_json_path = os.path.join(BASE_DIR, 'users.json')
+        self.suppress_outdated_reagent_alerts = False
 
         self.init_db()
         self.create_ui()
@@ -485,6 +486,38 @@ class ProjectManager:
             messagebox.showerror("Error", "Project total samples must be a positive integer.")
             return
 
+        # Check for outdated reagents
+        if not getattr(self, 'suppress_outdated_reagent_alerts', False):
+            try:
+                self.cursor.execute('''
+                    SELECT st.name, st.last_updated
+                    FROM services_db.service_requirements sr
+                    JOIN stock_db.stock st ON sr.stock_item_id = st.id
+                    WHERE sr.service_id = ?
+                ''', (service_id,))
+                
+                outdated_reagents = []
+                now = datetime.now()
+                for r_name, last_updated_str in self.cursor.fetchall():
+                    is_outdated = False
+                    if not last_updated_str:
+                        is_outdated = True
+                    else:
+                        try:
+                            lu_date = datetime.strptime(last_updated_str, '%Y-%m-%d %H:%M:%S')
+                            if (now - lu_date).days > 182: # ~6 months
+                                is_outdated = True
+                        except ValueError:
+                            is_outdated = True
+                            
+                    if is_outdated:
+                        outdated_reagents.append(r_name)
+                        
+                if outdated_reagents:
+                    self._show_outdated_reagent_alert(outdated_reagents)
+            except sqlite3.Error as e:
+                print(f"Error checking reagent dates: {e}")
+
         # Calculate cost for this service
         num_samples_for_cost = samples_override if samples_override is not None else project_total_samples
         calculated_cost = self.calculate_service_cost(service_id, num_samples_for_cost)
@@ -495,6 +528,36 @@ class ProjectManager:
                                           tags=(str(service_id), str(samples_override) if samples_override is not None else "", str(calculated_cost)))  # type: ignore
         self.update_total_cost()
         self.service_samples_override_var.set("") # Clear override field
+
+    def _show_outdated_reagent_alert(self, outdated_list):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Outdated Reagent Prices")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 225
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 150
+        dialog.geometry(f"450x300+{x}+{y}")
+        
+        msg = "The following reagents required by this service have not had their prices updated in over 6 months:\n\n"
+        msg += "\n".join([f"• {r}" for r in outdated_list[:8]])
+        if len(outdated_list) > 8:
+            msg += f"\n... and {len(outdated_list)-8} more."
+            
+        ttk.Label(dialog, text=msg, wraplength=410, justify="left").pack(padx=20, pady=20, fill="both", expand=True)
+        
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=15)
+        
+        def on_ignore():
+            self.suppress_outdated_reagent_alerts = True
+            dialog.destroy()
+            
+        ttk.Button(btn_frame, text="OK", command=dialog.destroy, style="Accent.TButton").pack(side="left", padx=10)
+        ttk.Button(btn_frame, text="Ignore for this Session", command=on_ignore).pack(side="left", padx=10)
+        
+        self.root.wait_window(dialog)
 
     def move_service_up(self):
         selection = self.project_services_tree.selection()

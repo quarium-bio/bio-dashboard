@@ -91,60 +91,68 @@ class QuariumDashboard:
         return True
 
     def load_local_config(self):
-        if os.path.exists('local_config.json'):
+        config_path = os.path.join(BASE_DIR, 'local_config.json')
+        if os.path.exists(config_path):
             try:
-                with open('local_config.json', 'r') as f:
+                with open(config_path, 'r') as f:
                     return json.load(f)
             except Exception: pass
         return {"active_company": None, "companies": {}}
 
     def save_local_config(self, config):
-        with open('local_config.json', 'w') as f:
+        config_path = os.path.join(BASE_DIR, 'local_config.json')
+        with open(config_path, 'w') as f:
             json.dump(config, f)
 
     def save_current_tokens_to_profile(self):
         config = self.load_local_config()
         active = config.get("active_company")
         if active and active in config["companies"]:
-            if os.path.exists("token.json"):
-                with open("token.json", "r") as f:
+            token_path = os.path.join(BASE_DIR, 'token.json')
+            if os.path.exists(token_path):
+                with open(token_path, "r") as f:
                     config["companies"][active]["token"] = f.read()
             self.save_local_config(config)
 
     def clean_local_workspace(self):
         for f in self.db_files:
-            if os.path.exists(f):
-                try: os.remove(f)
+            file_path = os.path.join(BASE_DIR, f)
+            if os.path.exists(file_path):
+                try: os.remove(file_path)
                 except Exception: pass
 
     def apply_profile(self, comp_name, config):
         self.clean_local_workspace()
         prof = config["companies"].get(comp_name)
         if not prof: return
-        with open("credentials.json", "w") as f:
+        creds_path = os.path.join(BASE_DIR, 'credentials.json')
+        token_path = os.path.join(BASE_DIR, 'token.json')
+        with open(creds_path, "w") as f:
             f.write(prof.get("credentials", ""))
         if prof.get("token"):
-            with open("token.json", "w") as f:
+            with open(token_path, "w") as f:
                 f.write(prof["token"])
         else:
-            if os.path.exists("token.json"):
-                os.remove("token.json")
+            if os.path.exists(token_path):
+                os.remove(token_path)
 
     def startup_check(self):
         if not self.check_updates():
             return
             
         config = self.load_local_config()
+        creds_path = os.path.join(BASE_DIR, 'credentials.json')
+        token_path = os.path.join(BASE_DIR, 'token.json')
         
         # Legacy migration for existing users
-        if os.path.exists("credentials.json") and not config["companies"]:
+        if os.path.exists(creds_path) and not config["companies"]:
             comp_name = simpledialog.askstring("Setup", "Existing connection detected.\nPlease enter your Company Name (e.g., Quarium):")
             if not comp_name: comp_name = "Default Company"
             
-            with open("credentials.json", "r") as f: creds = f.read()
+            with open(creds_path, "r") as f: creds = f.read()
             token_data = ""
-            if os.path.exists("token.json"):
-                with open("token.json", "r") as f: token_data = f.read()
+            if os.path.exists(token_path):
+                with open(token_path, "r") as f: token_data = f.read()
                 
             config["companies"][comp_name] = {"credentials": creds, "token": token_data}
             config["active_company"] = comp_name
@@ -222,9 +230,14 @@ class QuariumDashboard:
         if DriveSyncManager:
             try:
                 self.drive_sync = DriveSyncManager()
+                self._show_progress_dialog("Syncing Users", "Downloading user list...")
+                self.drive_sync.sync_down(['users.json'])
+                self._hide_progress_dialog()
             except ImportError as e:
+                self._hide_progress_dialog()
                 messagebox.showwarning("Sync Dependencies Missing", f"{e}\n\nOperating in local mode.")
             except Exception as e:
+                self._hide_progress_dialog()
                 messagebox.showerror("Sync Error", f"An unexpected error occurred during Google Drive sync: {e}\n\nOperating in local mode.")
         else:
             messagebox.showinfo("Local Mode", "QuariumDriveSync not found or Google API libraries missing. Operating locally.")
@@ -253,8 +266,9 @@ class QuariumDashboard:
         login_win.focus_force() # Make sure it appears on top
 
         users = {}
-        if os.path.exists('users.json'):
-            with open('users.json', 'r') as f:
+        users_path = os.path.join(BASE_DIR, 'users.json')
+        if os.path.exists(users_path):
+            with open(users_path, 'r') as f:
                 users = json.load(f)
 
         ttk.Label(login_win, text="Select User:").pack(pady=(10, 5))
@@ -268,7 +282,8 @@ class QuariumDashboard:
             if selected:
                 self.current_user = selected
                 login_win.destroy()
-                self.check_and_acquire_lock()
+                self._show_progress_dialog("Loading", "Initializing session...")
+                self.root.after(100, self.check_and_acquire_lock)
             else:
                 messagebox.showwarning("Warning", "Please select a user")
 
@@ -281,7 +296,7 @@ class QuariumDashboard:
                         messagebox.showwarning("Warning", "Username already exists")
                     else:
                         users[username] = name
-                        with open('users.json', 'w') as f:
+                        with open(users_path, 'w') as f:
                             json.dump(users, f)
                         user_combo['values'] = list(users.keys())
                         user_var.set(username)
@@ -306,7 +321,6 @@ class QuariumDashboard:
             
         self._show_progress_dialog("Checking Status", "Checking online database status...")
         lock_data = self.drive_sync.read_lock()  # type: ignore
-        self._hide_progress_dialog()
         
         now = time.time()
         if lock_data and lock_data.get('owner') and (now - lock_data.get('last_active', 0) < 45):
@@ -315,6 +329,7 @@ class QuariumDashboard:
                 self.do_sync_down_and_finish(read_only=False)
                 return
                 
+            self._hide_progress_dialog()
             res = messagebox.askyesnocancel("Database in Use", 
                 f"User '{owner}' is currently editing the database.\n\n"
                 "Do you want to request editing permissions? (They will have 15 seconds to respond).\n\n"
@@ -342,9 +357,9 @@ class QuariumDashboard:
         if self.drive_sync:
             try: self.drive_sync.sync_down(self.db_files)  # type: ignore
             except Exception as e: print("Sync down error:", e)
-        self._hide_progress_dialog()
         
         if ui_exists:
+            self._show_progress_dialog("Loading", "Rebuilding User Interface...")
             old_view = self.current_view.get()
             for widget in self.root.winfo_children():
                 if not isinstance(widget, tk.Toplevel):
@@ -361,7 +376,10 @@ class QuariumDashboard:
             if not self.frames: self.finish_init()
             self.enforce_read_only_mode()
             if not ui_exists:
+                self._hide_progress_dialog()
                 messagebox.showinfo("Read-Only", "You are now in Read-Only mode. Edits cannot be saved.")
+            else:
+                self._hide_progress_dialog()
 
     def _notify_lock_lost(self):
         self.enforce_read_only_mode()
@@ -369,11 +387,14 @@ class QuariumDashboard:
 
     def acquire_lock(self):
         if self.drive_sync:
+            self._show_progress_dialog("Loading", "Acquiring lock...")
             ld = {"owner": self.current_user, "last_active": time.time(), "request_by": None, "response": None}
             self.drive_sync.write_lock(ld)  # type: ignore
         self.is_owner = True
         if not self.frames: self.finish_init()
-        else: self.enable_read_write_mode()
+        else: 
+            self.enable_read_write_mode()
+            self._hide_progress_dialog()
         self.start_lock_poller()
 
     def request_lock(self, owner):
@@ -537,7 +558,7 @@ class QuariumDashboard:
             self.do_sync_down_and_finish(read_only=False)
             
     def finish_init(self):
-        self.root.deiconify() # Show main window
+        self._show_progress_dialog("Loading", "Building User Interface...")
         
         window_width = 1200
         window_height = 800
@@ -560,6 +581,9 @@ class QuariumDashboard:
                 icon_img = tk.PhotoImage(file=logo_path)
                 self.root.iconphoto(True, icon_img)
             except Exception: pass
+            
+        self._hide_progress_dialog()
+        self.root.deiconify() # Show main window
         
     def create_ui(self):
         # Configure grid for the main window
@@ -735,6 +759,15 @@ class QuariumDashboard:
             comp_app.load_composite(composite_name)
             
     def _show_progress_dialog(self, title, message):
+        if hasattr(self, 'progress_dialog') and self.progress_dialog.winfo_exists():
+            self.progress_dialog.title(title)
+            for widget in self.progress_dialog.winfo_children():
+                if isinstance(widget, ttk.Label):
+                    widget.config(text=message)
+                    break
+            self.progress_dialog.update_idletasks()
+            return
+
         self.progress_dialog = tk.Toplevel(self.root)
         self.progress_dialog.title(title)
         self.progress_dialog.transient(self.root)
@@ -743,8 +776,12 @@ class QuariumDashboard:
         self.progress_dialog.update_idletasks() # Ensure dialog is ready for geometry calculation
         
         # Center the dialog
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (self.progress_dialog.winfo_width() // 2)
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (self.progress_dialog.winfo_height() // 2)
+        if self.root.winfo_viewable():
+            x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (self.progress_dialog.winfo_width() // 2)
+            y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (self.progress_dialog.winfo_height() // 2)
+        else:
+            x = (self.root.winfo_screenwidth() // 2) - 125
+            y = (self.root.winfo_screenheight() // 2) - 50
         self.progress_dialog.geometry(f"+{x}+{y}")
 
         ttk.Label(self.progress_dialog, text=message, padding=10).pack()
@@ -900,7 +937,7 @@ class QuariumDashboard:
         notebook = ttk.Notebook(dialog)
         notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
-        settings_path = 'settings.json'
+        settings_path = os.path.join(BASE_DIR, 'settings.json')
         settings = {}
         if os.path.exists(settings_path):
             try:
@@ -924,7 +961,7 @@ class QuariumDashboard:
 
         def save_general():
             settings["footer_text"] = footer_text.get("1.0", tk.END).strip()
-            settings["estimate_logo"] = "EstimateLogo.png" if os.path.exists("EstimateLogo.png") else "QLogo.png"
+            settings["estimate_logo"] = "EstimateLogo.png" if os.path.exists(os.path.join(BASE_DIR, "EstimateLogo.png")) else "QLogo.png"
             with open(settings_path, 'w') as f:
                 json.dump(settings, f)
             if self.drive_sync:
@@ -945,16 +982,17 @@ class QuariumDashboard:
         user_tree.pack(fill="x", pady=5)
 
         users_dict = {}
-        if os.path.exists('users.json'):
+        users_path = os.path.join(BASE_DIR, 'users.json')
+        if os.path.exists(users_path):
             try:
-                with open('users.json', 'r') as f:
+                with open(users_path, 'r') as f:
                     users_dict = json.load(f)
                 for uname, fname in users_dict.items():
                     user_tree.insert("", "end", text=uname, values=(fname,))
             except Exception: pass
 
         def _save_users(u_dict):
-            with open('users.json', 'w') as f:
+            with open(users_path, 'w') as f:
                 json.dump(u_dict, f)
             if self.drive_sync:
                 try: self.drive_sync.sync_up(['users.json'])
@@ -1141,8 +1179,10 @@ class QuariumDashboard:
             self.force_disconnect = True
             dialog.destroy()
             
-            if os.path.exists("credentials.json"): os.remove("credentials.json")
-            if os.path.exists("token.json"): os.remove("token.json")
+            creds_path = os.path.join(BASE_DIR, 'credentials.json')
+            token_path = os.path.join(BASE_DIR, 'token.json')
+            if os.path.exists(creds_path): os.remove(creds_path)
+            if os.path.exists(token_path): os.remove(token_path)
             self.clean_local_workspace()
             
             self.logout_no_sync()
@@ -1394,8 +1434,9 @@ class QuariumDashboard:
             temp_zip = "temp_backup.zip"
             with zipfile.ZipFile(temp_zip, 'w') as zipf:
                 for f in self.db_files:
-                    if os.path.exists(f):
-                        zipf.write(f)
+                    file_path = os.path.join(BASE_DIR, f)
+                    if os.path.exists(file_path):
+                        zipf.write(file_path, arcname=f)
             
             with open(temp_zip, 'rb') as f:
                 zip_data = f.read()

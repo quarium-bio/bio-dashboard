@@ -3,9 +3,61 @@ import sys
 import json
 import sqlite3
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 import math
+
+try:
+    from reportlab.lib.pagesizes import A4  # type: ignore
+    from reportlab.lib import colors  # type: ignore
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage  # type: ignore
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle  # type: ignore
+    from reportlab.lib.units import cm  # type: ignore
+    from reportlab.pdfgen import canvas  # type: ignore
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+    A4 = (595.27, 841.89)  # type: ignore
+    cm = 28.3465  # type: ignore
+
+    class _DummyColor:
+        lightgrey = None
+        grey = None
+    colors = _DummyColor()  # type: ignore
+
+    class SimpleDocTemplate:  # type: ignore
+        def __init__(self, *args, **kwargs): pass
+        def build(self, *args, **kwargs): pass
+
+    class Paragraph:  # type: ignore
+        def __init__(self, *args, **kwargs): pass
+
+    class Spacer:  # type: ignore
+        def __init__(self, *args, **kwargs): pass
+
+    class Table:  # type: ignore
+        def __init__(self, *args, **kwargs): pass
+        def setStyle(self, *args, **kwargs): pass
+
+    class TableStyle:  # type: ignore
+        def __init__(self, *args, **kwargs): pass
+
+    class RLImage:  # type: ignore
+        def __init__(self, *args, **kwargs): pass
+
+    def getSampleStyleSheet(*args, **kwargs):  # type: ignore
+        return {'Heading1': None, 'Normal': None}
+
+    class ParagraphStyle:  # type: ignore
+        def __init__(self, *args, **kwargs): pass
+
+    class canvas:  # type: ignore
+        class Canvas:
+            def __init__(self, *args, **kwargs): pass
+            def setFont(self, *args, **kwargs): pass
+            def setFillColor(self, *args, **kwargs): pass
+            def drawCentredString(self, *args, **kwargs): pass
+            def drawRightString(self, *args, **kwargs): pass
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
@@ -51,6 +103,11 @@ class ProjectFlowManager:
         try: self.cursor.execute('ALTER TABLE project_services ADD COLUMN completed INTEGER DEFAULT 0')
         except sqlite3.OperationalError: pass
         try: self.cursor.execute('ALTER TABLE project_services ADD COLUMN executor TEXT')
+        except sqlite3.OperationalError: pass
+            
+        try: self.cursor.execute('ALTER TABLE projects ADD COLUMN lab_notebook TEXT')
+        except sqlite3.OperationalError: pass
+        try: self.cursor.execute('ALTER TABLE project_services ADD COLUMN lab_notebook TEXT')
         except sqlite3.OperationalError: pass
             
         self.conn.commit()
@@ -592,3 +649,226 @@ class ProjectFlowManager:
             messagebox.showinfo("Saved", "Finances saved successfully.", parent=dialog)
             
         ttk.Button(tab_finances, text="Save Finances", command=save_finances, style="Accent.TButton").pack(anchor="sw", pady=20)
+
+        # --- Tab 3: Lab Notebook ---
+        tab_notebook = ttk.Frame(notebook)
+        notebook.add(tab_notebook, text="Lab Notebook")
+        
+        nb_canvas = tk.Canvas(tab_notebook, highlightthickness=0)
+        nb_scroll = ttk.Scrollbar(tab_notebook, orient="vertical", command=nb_canvas.yview)
+        nb_frame = ttk.Frame(nb_canvas, padding=20)
+        
+        nb_frame.bind("<Configure>", lambda e: nb_canvas.configure(scrollregion=nb_canvas.bbox("all")))
+        nb_canvas_window = nb_canvas.create_window((0, 0), window=nb_frame, anchor="nw")
+        def on_nb_canvas_configure(event):
+            nb_canvas.itemconfig(nb_canvas_window, width=event.width)
+        nb_canvas.bind("<Configure>", on_nb_canvas_configure)
+        
+        nb_canvas.pack(side="left", fill="both", expand=True)
+        nb_scroll.pack(side="right", fill="y")
+        nb_canvas.configure(yscrollcommand=nb_scroll.set)
+        
+        self.cursor.execute("SELECT lab_notebook FROM projects WHERE id = ?", (p_id,))
+        row = self.cursor.fetchone()
+        main_nb_text = row[0] if row and row[0] else ""
+        
+        ttk.Label(nb_frame, text="Observações Gerais", font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(0, 5))
+        main_text_widget = tk.Text(nb_frame, height=5, width=60)
+        main_text_widget.pack(fill="x", pady=(0, 15))
+        main_text_widget.insert("1.0", main_nb_text)
+        
+        self.cursor.execute("ATTACH DATABASE ? AS services_db", (self.service_db_path,))
+        self.cursor.execute('''
+            SELECT ps.id, s.name, ps.lab_notebook 
+            FROM project_services ps
+            JOIN services_db.services s ON ps.service_id = s.id
+            WHERE ps.project_id = ?
+        ''', (p_id,))
+        ps_data = self.cursor.fetchall()
+        self.cursor.execute("DETACH DATABASE services_db")
+        
+        service_text_widgets = {}
+        if ps_data:
+            ttk.Label(nb_frame, text="Observações por Serviço", font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(10, 5))
+            for ps_id, s_name, s_nb_text in ps_data:
+                ttk.Label(nb_frame, text=s_name, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(10, 2))
+                txt = tk.Text(nb_frame, height=4, width=60)
+                txt.pack(fill="x")
+                txt.insert("1.0", s_nb_text if s_nb_text else "")
+                service_text_widgets[ps_id] = txt
+                
+        btn_frame_nb = ttk.Frame(nb_frame)
+        btn_frame_nb.pack(fill="x", pady=20)
+        
+        def save_notebook():
+            self.cursor.execute("UPDATE projects SET lab_notebook = ? WHERE id = ?", (main_text_widget.get("1.0", tk.END).strip(), p_id))
+            for ps_id, txt_w in service_text_widgets.items():
+                self.cursor.execute("UPDATE project_services SET lab_notebook = ? WHERE id = ?", (txt_w.get("1.0", tk.END).strip(), ps_id))
+            self.conn.commit()
+            
+        def export_notebook_pdf():
+            save_notebook()
+            self.generate_notebook_pdf(p_id, est_num)
+            
+        ttk.Button(btn_frame_nb, text="Save Notebook", command=lambda: [save_notebook(), messagebox.showinfo("Saved", "Lab Notebook saved successfully.", parent=dialog)], style="Accent.TButton").pack(side="left", padx=5)
+        ttk.Button(btn_frame_nb, text="Export PDF Report", command=export_notebook_pdf).pack(side="left", padx=5)
+
+        # --- Tab 4: Deletion ---
+        tab_deletion = ttk.Frame(notebook, padding=20)
+        notebook.add(tab_deletion, text="Deletion")
+        
+        warn_msg = "WARNING: Deleting this project from the flow will remove it from all active stages.\nAll progress dates and execution statuses will be lost, and it will need to be approved again from the Project Manager tab."
+        ttk.Label(tab_deletion, text=warn_msg, foreground="#D32F2F", font=("Helvetica", 10, "bold"), justify="center", wraplength=500).pack(pady=(20, 30))
+        
+        def delete_from_flow():
+            if messagebox.askyesno("Confirm Deletion", "Are you sure you wish to delete this project from the flow?\n\nIt will need to be added again from the estimates tab and all progress will be lost.", parent=dialog):
+                try:
+                    self.cursor.execute('''
+                        UPDATE projects 
+                        SET status = 0, approved_at = NULL, contract_sent_at = NULL, 
+                            contract_signed_at = NULL, samples_received_at = NULL, 
+                            sample_storage_location = NULL, samples_analyzed_at = NULL, 
+                            data_released_at = NULL, completed_at = NULL
+                        WHERE id = ?
+                    ''', (p_id,))
+                    self.cursor.execute("UPDATE project_services SET completed = 0, executor = NULL WHERE project_id = ?", (p_id,))
+                    self.conn.commit()
+                    self.load_data()
+                    dialog.destroy()
+                    messagebox.showinfo("Deleted", "Project has been removed from the flow.", parent=self.root)
+                except sqlite3.Error as e:
+                    messagebox.showerror("Database Error", f"Could not remove project from flow: {e}", parent=dialog)
+                    
+        ttk.Button(tab_deletion, text="Delete Project from Flow", command=delete_from_flow).pack(ipady=5, ipadx=10)
+
+    def generate_notebook_pdf(self, p_id, est_num):
+        if not REPORTLAB_AVAILABLE:
+            messagebox.showerror("Dependency Missing", "Please install reportlab to generate PDFs.\nCommand: pip install reportlab")
+            return
+        
+        pdf_path = filedialog.asksaveasfilename(defaultextension=".pdf", initialfile=f"Relatorio_{est_num}.pdf", title="Save Lab Notebook PDF", filetypes=[("PDF files", "*.pdf")])
+        if not pdf_path: return
+        
+        self.cursor.execute("ATTACH DATABASE ? AS clients_db", (os.path.join(os.path.dirname(self.db_path), 'clients.db'),))
+        self.cursor.execute('''
+            SELECT p.lab_notebook, c.name, p.approved_at, p.contract_sent_at, p.contract_signed_at, 
+                   p.samples_received_at, p.samples_analyzed_at, p.data_released_at, p.completed_at
+            FROM projects p
+            LEFT JOIN clients_db.clients c ON p.client_id = c.id
+            WHERE p.id = ?
+        ''', (p_id,))
+        p_data = self.cursor.fetchone()
+        self.cursor.execute("DETACH DATABASE clients_db")
+        
+        if not p_data: return
+        main_notes, client_name, d_app, d_csent, d_csign, d_srecv, d_sanal, d_drel, d_comp = p_data
+        
+        self.cursor.execute("ATTACH DATABASE ? AS services_db", (self.service_db_path,))
+        self.cursor.execute('''
+            SELECT s.name, ps.lab_notebook 
+            FROM project_services ps
+            JOIN services_db.services s ON ps.service_id = s.id
+            WHERE ps.project_id = ?
+        ''', (p_id,))
+        ps_data = self.cursor.fetchall()
+        self.cursor.execute("DETACH DATABASE services_db")
+        
+        doc = SimpleDocTemplate(pdf_path, pagesize=A4, rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2.5*cm)
+        elements = []
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=18, spaceAfter=12, alignment=1)
+        normal_style = ParagraphStyle('NormalStyle', parent=styles['Normal'], fontName='Helvetica', fontSize=10, spaceAfter=2)
+        italic_style = ParagraphStyle('ItalicStyle', parent=normal_style, fontName='Helvetica-Oblique')
+        bold_style = ParagraphStyle('BoldStyle', parent=normal_style, fontName='Helvetica-Bold', spaceBefore=6)
+        
+        settings = self.load_settings()
+        NumberedCanvas.footer_text = settings.get("footer_text", "Quarium Consultoria em Biologia Analítica, Ltda. | Campinas, SP | Email: quarium.bio@gmail.com")
+        
+        est_logo_file = settings.get("estimate_logo", "QLogo.png")
+        logo_path = os.path.join(BASE_DIR, est_logo_file)
+        if not os.path.exists(logo_path):
+            logo_path = os.path.join(BASE_DIR, 'QLogo.png')
+        if os.path.exists(logo_path): logo = RLImage(logo_path, width=3*cm, height=3*cm, kind='proportional')
+        else: logo = Paragraph("<b>[Logo Missing]</b>", normal_style)
+            
+        header_table = Table([[logo, Paragraph(f"{est_num} Relatório Parcial", title_style)]], colWidths=[4*cm, A4[0] - 8*cm])
+        header_table.setStyle(TableStyle([('ALIGN', (0,0), (0,0), 'LEFT'), ('ALIGN', (1,0), (1,0), 'CENTER'), ('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        elements.append(header_table)
+        elements.append(Spacer(1, 0.5*cm))
+        
+        current_date = datetime.now().strftime('%d/%m/%Y')
+        info_data = [
+            [Paragraph("<b>Cliente:</b>", normal_style), Paragraph(client_name or "Desconhecido", normal_style)],
+            [Paragraph("<b>Gerado por:</b>", normal_style), Paragraph(self.current_user, normal_style)],
+            [Paragraph("<b>Data:</b>", normal_style), Paragraph(current_date, normal_style)]
+        ]
+        info_table = Table(info_data, colWidths=[3*cm, A4[0] - 7*cm])
+        info_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
+        elements.append(info_table)
+        elements.append(Spacer(1, 0.5*cm))
+        
+        def fmt_date(d_str):
+            if not d_str: return "Pendente"
+            try: return datetime.strptime(d_str.split()[0], '%Y-%m-%d').strftime('%d/%m/%Y')
+            except: return d_str
+            
+        elements.append(Paragraph("<b>Status do Projeto:</b>", normal_style))
+        dates_data = [
+            [Paragraph("Orçamento Aprovado:", normal_style), Paragraph(fmt_date(d_app), normal_style)],
+            [Paragraph("Contrato Enviado:", normal_style), Paragraph(fmt_date(d_csent), normal_style)],
+            [Paragraph("Contrato Assinado:", normal_style), Paragraph(fmt_date(d_csign), normal_style)],
+            [Paragraph("Amostras Recebidas:", normal_style), Paragraph(fmt_date(d_srecv), normal_style)],
+            [Paragraph("Amostras Analisadas:", normal_style), Paragraph(fmt_date(d_sanal), normal_style)],
+            [Paragraph("Dados Liberados:", normal_style), Paragraph(fmt_date(d_drel), normal_style)],
+            [Paragraph("Projeto Concluído:", normal_style), Paragraph(fmt_date(d_comp), normal_style)]
+        ]
+        dates_table = Table(dates_data, colWidths=[5*cm, A4[0] - 9*cm])
+        dates_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP')]))
+        elements.append(dates_table)
+        elements.append(Spacer(1, 0.5*cm))
+        
+        if main_notes:
+            elements.append(Paragraph("<b>Observações Gerais:</b>", bold_style))
+            elements.append(Paragraph(main_notes.replace('\n', '<br/>'), normal_style))
+            elements.append(Spacer(1, 0.5*cm))
+            
+        elements.append(Paragraph("<b>Detalhes por Serviço:</b>", bold_style))
+        elements.append(Spacer(1, 0.2*cm))
+        
+        for s_name, s_nb in ps_data:
+            elements.append(Paragraph(f"<b>{s_name}</b>", normal_style))
+            if s_nb and s_nb.strip():
+                elements.append(Paragraph(s_nb.strip().replace('\n', '<br/>'), normal_style))
+            else:
+                elements.append(Paragraph("<i>Sem observações ou deviações do protocolo padrão.</i>", italic_style))
+            elements.append(Spacer(1, 0.3*cm))
+            
+        try:
+            doc.build(elements, canvasmaker=NumberedCanvas)
+            messagebox.showinfo("Success", f"PDF exported successfully to:\n{pdf_path}")
+        except PermissionError:
+            messagebox.showerror("Export Error", "Cannot generate file. Ensure the PDF is not open in another program.")
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Could not generate PDF: {e}")
+
+if REPORTLAB_AVAILABLE:
+    class NumberedCanvas(canvas.Canvas):
+        footer_text = "Quarium Consultoria em Biologia Analítica, Ltda. | Campinas, SP | Email: quarium.bio@gmail.com"
+        def __init__(self, *args, **kwargs):
+            canvas.Canvas.__init__(self, *args, **kwargs)
+            self._saved_page_states = []
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()  # type: ignore
+        def save(self):
+            num_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self.draw_page_number(num_pages)  # type: ignore
+                canvas.Canvas.showPage(self)  # type: ignore
+            canvas.Canvas.save(self)  # type: ignore
+        def draw_page_number(self, page_count):
+            self.setFont("Helvetica", 8)
+            self.setFillColor(colors.grey)
+            self.drawCentredString(A4[0] / 2.0, 1.0 * cm, self.footer_text)
+            self.drawRightString(A4[0] - 1.5 * cm, 1.0 * cm, f"Página {self._pageNumber} de {page_count}")  # type: ignore
