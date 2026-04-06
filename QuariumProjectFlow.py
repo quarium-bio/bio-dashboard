@@ -870,5 +870,9 @@ if REPORTLAB_AVAILABLE:
         def draw_page_number(self, page_count):
             self.setFont("Helvetica", 8)
             self.setFillColor(colors.grey)
-            self.drawCentredString(A4[0] / 2.0, 1.0 * cm, self.footer_text)
+            lines = self.footer_text.split('\n')
+            y_pos = 1.0 * cm + (len(lines) - 1) * 10
+            for line in lines:
+                self.drawCentredString(A4[0] / 2.0, y_pos, line.strip())
+                y_pos -= 10
             self.drawRightString(A4[0] - 1.5 * cm, 1.0 * cm, f"Página {self._pageNumber} de {page_count}")  # type: ignore
