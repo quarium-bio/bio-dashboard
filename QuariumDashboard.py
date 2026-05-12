@@ -50,7 +50,7 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-CURRENT_VERSION = "1.1.0"
+CURRENT_VERSION = "1.2.0"
 UPDATE_URL = "https://raw.githubusercontent.com/quarium-bio/bio-dashboard/main/version.json" # Change to your actual raw URL
 
 class QuariumDashboard:
