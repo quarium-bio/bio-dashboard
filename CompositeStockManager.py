@@ -36,8 +36,7 @@ class CompositeStockManager:
         self.components = []
 
         self.create_ui()
-        self.load_items()
-        self.update_summary()
+        # Startup speedup: Data loading deferred to switch_view
 
     def setup_db(self):
         self.cursor.execute('''

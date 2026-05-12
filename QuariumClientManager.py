@@ -24,7 +24,7 @@ class ClientManager:
 
         self.init_db()
         self.create_ui()
-        self.load_clients()
+        # Startup speedup: Data loading deferred to switch_view
 
         if isinstance(self.root, (tk.Tk, tk.Toplevel)):
             self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -69,6 +69,22 @@ class ClientManager:
         client_columns = [column[1] for column in self.cursor.fetchall()]
         if 'phone' not in client_columns:
             self.cursor.execute('ALTER TABLE clients ADD COLUMN phone TEXT')
+        if 'cpf_cnpj' not in client_columns:
+            self.cursor.execute('ALTER TABLE clients ADD COLUMN cpf_cnpj TEXT')
+        if 'observations' not in client_columns:
+            self.cursor.execute('ALTER TABLE clients ADD COLUMN observations TEXT')
+        if 'client_type' not in client_columns:
+            self.cursor.execute('ALTER TABLE clients ADD COLUMN client_type TEXT DEFAULT "PF"')
+        if 'profession' not in client_columns:
+            self.cursor.execute('ALTER TABLE clients ADD COLUMN profession TEXT')
+        if 'marital_status' not in client_columns:
+            self.cursor.execute('ALTER TABLE clients ADD COLUMN marital_status TEXT')
+        if 'nationality' not in client_columns:
+            self.cursor.execute('ALTER TABLE clients ADD COLUMN nationality TEXT')
+        if 'id_number' not in client_columns:
+            self.cursor.execute('ALTER TABLE clients ADD COLUMN id_number TEXT')
+        if 'id_issuer' not in client_columns:
+            self.cursor.execute('ALTER TABLE clients ADD COLUMN id_issuer TEXT')
         if 'updated_by' not in client_columns:
             self.cursor.execute('ALTER TABLE clients ADD COLUMN updated_by TEXT')
             try: self.cursor.execute('ALTER TABLE companies ADD COLUMN updated_by TEXT')
@@ -109,30 +125,68 @@ class ClientManager:
 
         info_frame = ttk.Frame(right_panel)
         info_frame.pack(fill="x", pady=(0, 10))
+        info_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(info_frame, text="Client Name * :").grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Label(info_frame, text="Client Type:").grid(row=0, column=0, sticky="w", pady=5)
+        type_frame = ttk.Frame(info_frame)
+        type_frame.grid(row=0, column=1, sticky="w", padx=5)
+        self.client_type_var = tk.StringVar(value="PF")
+        ttk.Radiobutton(type_frame, text="Pessoa Física", variable=self.client_type_var, value="PF", command=self.update_cpf_cnpj_label).pack(side="left", padx=(0, 10))
+        ttk.Radiobutton(type_frame, text="Pessoa Jurídica", variable=self.client_type_var, value="PJ", command=self.update_cpf_cnpj_label).pack(side="left")
+
+        ttk.Label(info_frame, text="Client Name * :").grid(row=1, column=0, sticky="w", pady=5)
         self.name_var = tk.StringVar()
-        ttk.Entry(info_frame, textvariable=self.name_var, width=40).grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        ttk.Entry(info_frame, textvariable=self.name_var, width=40).grid(row=1, column=1, padx=5, pady=5, sticky="we")
 
-        ttk.Label(info_frame, text="Client Email * :").grid(row=1, column=0, sticky="w", pady=5)
+        ttk.Label(info_frame, text="Client Email * :").grid(row=2, column=0, sticky="w", pady=5)
         self.email_var = tk.StringVar()
-        ttk.Entry(info_frame, textvariable=self.email_var, width=40).grid(row=1, column=1, padx=5, pady=5, sticky="w")
+        ttk.Entry(info_frame, textvariable=self.email_var, width=40).grid(row=2, column=1, padx=5, pady=5, sticky="we")
 
-        ttk.Label(info_frame, text="Phone Number:").grid(row=2, column=0, sticky="w", pady=5)
+        self.cpf_cnpj_label = ttk.Label(info_frame, text="CPF:")
+        self.cpf_cnpj_label.grid(row=3, column=0, sticky="w", pady=5)
+        self.cpf_cnpj_var = tk.StringVar()
+        ttk.Entry(info_frame, textvariable=self.cpf_cnpj_var, width=40).grid(row=3, column=1, padx=5, pady=5, sticky="we")
+
+        ttk.Label(info_frame, text="Phone Number:").grid(row=4, column=0, sticky="w", pady=5)
         self.phone_var = tk.StringVar()
-        ttk.Entry(info_frame, textvariable=self.phone_var, width=40).grid(row=2, column=1, padx=5, pady=5, sticky="w")
+        ttk.Entry(info_frame, textvariable=self.phone_var, width=40).grid(row=4, column=1, padx=5, pady=5, sticky="we")
 
-        ttk.Label(info_frame, text="Client Address:").grid(row=3, column=0, sticky="nw", pady=5)
+        ttk.Label(info_frame, text="Profession:").grid(row=5, column=0, sticky="w", pady=5)
+        self.profession_var = tk.StringVar()
+        ttk.Entry(info_frame, textvariable=self.profession_var, width=40).grid(row=5, column=1, padx=5, pady=5, sticky="we")
+
+        ttk.Label(info_frame, text="Marital Status:").grid(row=6, column=0, sticky="w", pady=5)
+        self.marital_status_var = tk.StringVar()
+        ttk.Entry(info_frame, textvariable=self.marital_status_var, width=40).grid(row=6, column=1, padx=5, pady=5, sticky="we")
+
+        ttk.Label(info_frame, text="Nationality:").grid(row=7, column=0, sticky="w", pady=5)
+        self.nationality_var = tk.StringVar()
+        ttk.Entry(info_frame, textvariable=self.nationality_var, width=40).grid(row=7, column=1, padx=5, pady=5, sticky="we")
+
+        ttk.Label(info_frame, text="ID (RG, etc.):").grid(row=8, column=0, sticky="w", pady=5)
+        self.id_number_var = tk.StringVar()
+        ttk.Entry(info_frame, textvariable=self.id_number_var, width=40).grid(row=8, column=1, padx=5, pady=5, sticky="we")
+
+        ttk.Label(info_frame, text="ID Issuer:").grid(row=9, column=0, sticky="w", pady=5)
+        self.id_issuer_var = tk.StringVar()
+        ttk.Entry(info_frame, textvariable=self.id_issuer_var, width=40).grid(row=9, column=1, padx=5, pady=5, sticky="we")
+
+        ttk.Label(info_frame, text="Client Address:").grid(row=10, column=0, sticky="nw", pady=5)
         self.address_text = tk.Text(info_frame, width=30, height=4,
                                     background="#F0F0F0", relief="flat", borderwidth=1)
-        self.address_text.grid(row=3, column=1, padx=5, pady=5, sticky="w")
+        self.address_text.grid(row=10, column=1, padx=5, pady=5, sticky="we")
 
-        ttk.Label(info_frame, text="Funding Code:").grid(row=4, column=0, sticky="w", pady=5)
+        ttk.Label(info_frame, text="Funding Code:").grid(row=11, column=0, sticky="w", pady=5)
         self.funding_code_var = tk.StringVar()
-        ttk.Entry(info_frame, textvariable=self.funding_code_var, width=40).grid(row=4, column=1, padx=5, pady=5, sticky="w")
+        ttk.Entry(info_frame, textvariable=self.funding_code_var, width=40).grid(row=11, column=1, padx=5, pady=5, sticky="we")
+
+        ttk.Label(info_frame, text="Observations:").grid(row=12, column=0, sticky="nw", pady=5)
+        self.observations_text = tk.Text(info_frame, width=30, height=4,
+                                         background="#F0F0F0", relief="flat", borderwidth=1)
+        self.observations_text.grid(row=12, column=1, padx=5, pady=5, sticky="we")
 
         self.is_academic_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(info_frame, text="Academic Use", variable=self.is_academic_var).grid(row=5, column=0, columnspan=2, sticky="w", pady=10)
+        ttk.Checkbutton(info_frame, text="Academic Use", variable=self.is_academic_var).grid(row=13, column=0, columnspan=2, sticky="w", pady=10)
 
         # Save button docked to bottom
         save_frame = ttk.Frame(right_panel)
@@ -146,6 +200,44 @@ class ClientManager:
         self.tree.bind("<ButtonPress-1>", self.on_drag_start)
         self.tree.bind("<ButtonRelease-1>", self.on_drag_end)
         self.tree.bind("<B1-Motion>", self.on_drag_motion)
+
+    def update_cpf_cnpj_label(self):
+        if self.client_type_var.get() == "PF":
+            self.cpf_cnpj_label.config(text="CPF:")
+        else:
+            self.cpf_cnpj_label.config(text="CNPJ:")
+            
+    def validate_cpf(self, cpf):
+        numbers = [int(digit) for digit in re.findall(r'\d', cpf)]
+        if len(numbers) != 11 or len(set(numbers)) == 1:
+            return False
+        sum_of_products = sum(a*b for a, b in zip(numbers[0:9], range(10, 1, -1)))
+        expected_digit1 = (sum_of_products * 10 % 11) % 10
+        if numbers[9] != expected_digit1:
+            return False
+        sum_of_products = sum(a*b for a, b in zip(numbers[0:10], range(11, 1, -1)))
+        expected_digit2 = (sum_of_products * 10 % 11) % 10
+        if numbers[10] != expected_digit2:
+            return False
+        return True
+
+    def validate_cnpj(self, cnpj):
+        numbers = [int(digit) for digit in re.findall(r'\d', cnpj)]
+        if len(numbers) != 14 or len(set(numbers)) == 1:
+            return False
+        weights1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+        sum_of_products = sum(a*b for a, b in zip(numbers[0:12], weights1))
+        expected_digit1 = 11 - (sum_of_products % 11)
+        if expected_digit1 >= 10: expected_digit1 = 0
+        if numbers[12] != expected_digit1:
+            return False
+        weights2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+        sum_of_products = sum(a*b for a, b in zip(numbers[0:13], weights2))
+        expected_digit2 = 11 - (sum_of_products % 11)
+        if expected_digit2 >= 10: expected_digit2 = 0
+        if numbers[13] != expected_digit2:
+            return False
+        return True
 
     def load_clients(self):
         """Load all clients categorized by their companies"""
@@ -330,32 +422,59 @@ class ClientManager:
 
     def load_client_to_form(self, client_id):
         """Load existing client details onto the UI inputs"""
-        self.cursor.execute("SELECT name, email, phone, address, funding_code, is_academic FROM clients WHERE id = ?", (client_id,))
+        self.cursor.execute("SELECT name, email, phone, address, funding_code, is_academic, cpf_cnpj, observations, client_type, profession, marital_status, nationality, id_number, id_issuer FROM clients WHERE id = ?", (client_id,))
         result = self.cursor.fetchone()
         if result:
-            name, email, phone, address, funding_code, is_academic = result
+            name, email, phone, address, funding_code, is_academic, cpf_cnpj, observations, client_type, profession, marital_status, nationality, id_number, id_issuer = result
+            self.client_type_var.set(client_type or "PF")
+            self.update_cpf_cnpj_label()
             self.name_var.set(name)
             self.email_var.set(email)
             self.phone_var.set(phone or "")
+            self.cpf_cnpj_var.set(cpf_cnpj or "")
+            self.profession_var.set(profession or "")
+            self.marital_status_var.set(marital_status or "")
+            self.nationality_var.set(nationality or "")
+            self.id_number_var.set(id_number or "")
+            self.id_issuer_var.set(id_issuer or "")
             self.address_text.delete("1.0", tk.END)
             if address:
                 self.address_text.insert(tk.END, address)
             self.funding_code_var.set(funding_code or "")
+            self.observations_text.delete("1.0", tk.END)
+            if observations:
+                self.observations_text.insert(tk.END, observations)
             self.is_academic_var.set(bool(is_academic))
             self.current_client_id = client_id
 
     def save_client(self):
         """Persist UI Client form to DB"""
+        client_type = self.client_type_var.get()
         name = self.name_var.get().strip()
         email = self.email_var.get().strip()
         phone = self.phone_var.get().strip()
+        cpf_cnpj = self.cpf_cnpj_var.get().strip()
+        profession = self.profession_var.get().strip()
+        marital_status = self.marital_status_var.get().strip()
+        nationality = self.nationality_var.get().strip()
+        id_number = self.id_number_var.get().strip()
+        id_issuer = self.id_issuer_var.get().strip()
         address = self.address_text.get("1.0", tk.END).strip()
         funding_code = self.funding_code_var.get().strip()
+        observations = self.observations_text.get("1.0", tk.END).strip()
         is_academic = 1 if self.is_academic_var.get() else 0
 
         if not name or not email:
             messagebox.showerror("Error", "Name and Email are required")
             return
+            
+        if cpf_cnpj:
+            if client_type == "PF" and not self.validate_cpf(cpf_cnpj):
+                messagebox.showerror("Validation Error", "The provided CPF is invalid.")
+                return
+            elif client_type == "PJ" and not self.validate_cnpj(cpf_cnpj):
+                messagebox.showerror("Validation Error", "The provided CNPJ is invalid.")
+                return
 
         # Email validation regex
         if not re.match(r'^[\w\.-]+@[\w\.-]+\.\w+$', email):
@@ -366,14 +485,14 @@ class ClientManager:
         try:
             if self.current_client_id:
                 self.cursor.execute('''
-                    UPDATE clients SET name = ?, email = ?, phone = ?, address = ?, funding_code = ?, is_academic = ?, updated_at = ?, updated_by = ?
+                    UPDATE clients SET name = ?, email = ?, phone = ?, cpf_cnpj = ?, address = ?, funding_code = ?, observations = ?, is_academic = ?, client_type = ?, profession = ?, marital_status = ?, nationality = ?, id_number = ?, id_issuer = ?, updated_at = ?, updated_by = ?
                     WHERE id = ?
-                ''', (name, email, phone, address, funding_code, is_academic, now, self.current_user, self.current_client_id))
+                ''', (name, email, phone, cpf_cnpj, address, funding_code, observations, is_academic, client_type, profession, marital_status, nationality, id_number, id_issuer, now, self.current_user, self.current_client_id))
             else:
                 self.cursor.execute('''
-                    INSERT INTO clients (name, email, phone, address, funding_code, is_academic, created_at, updated_at, updated_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (name, email, phone, address, funding_code, is_academic, now, now, self.current_user))
+                    INSERT INTO clients (name, email, phone, cpf_cnpj, address, funding_code, observations, is_academic, client_type, profession, marital_status, nationality, id_number, id_issuer, created_at, updated_at, updated_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (name, email, phone, cpf_cnpj, address, funding_code, observations, is_academic, client_type, profession, marital_status, nationality, id_number, id_issuer, now, now, self.current_user))
                 self.current_client_id = self.cursor.lastrowid
             
             self.conn.commit()
@@ -404,11 +523,20 @@ class ClientManager:
             self.clear_form()
 
     def clear_form(self):
+        self.client_type_var.set("PF")
+        self.update_cpf_cnpj_label()
         self.name_var.set("")
         self.email_var.set("")
         self.phone_var.set("")
+        self.cpf_cnpj_var.set("")
+        self.profession_var.set("")
+        self.marital_status_var.set("")
+        self.nationality_var.set("")
+        self.id_number_var.set("")
+        self.id_issuer_var.set("")
         self.address_text.delete("1.0", tk.END)
         self.funding_code_var.set("")
+        self.observations_text.delete("1.0", tk.END)
         self.is_academic_var.set(False)
         self.current_client_id = None
 

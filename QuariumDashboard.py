@@ -26,6 +26,11 @@ try:
     from QuariumDriveSync import DriveSyncManager
 except ImportError:
     DriveSyncManager = None
+    
+try:
+    from QuariumFinances import FinancesManager
+except ImportError:
+    FinancesManager = None
 
 try:
     from cryptography.fernet import Fernet, InvalidToken
@@ -58,17 +63,28 @@ class QuariumDashboard:
         self.frames = {}
         self.current_user = None
         self.drive_sync = None # Initialize to None
-        self.db_files = ['stock.db', 'services.db', 'clients.db', 'projects.db', 'users.json', 'settings.json', 'QLogo.png', 'EstimateLogo.png']
+        self.db_files = ['stock.db', 'services.db', 'clients.db', 'projects.db', 'users.json', 'settings.json', 'QLogo.png', 'EstimateLogo.png', 'ContractTemplate.docx']
         
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.startup_check()
         
     def check_updates(self):
+        config = self.load_local_config()
+        last_check = config.get("last_update_check", 0)
+        current_time = time.time()
+        
+        # Only check once every 7 days (604800 seconds)
+        if current_time - last_check < 604800:
+            return True
+
         try:
             req = urllib.request.Request(UPDATE_URL, headers={'User-Agent': 'QuariumApp/1.0'})
             with urllib.request.urlopen(req, timeout=3) as response:
                 data = json.loads(response.read().decode())
             
+            config["last_update_check"] = current_time
+            self.save_local_config(config)
+
             latest_version = data.get("version", CURRENT_VERSION)
             level = data.get("level", "Patch")
             dl_url = data.get("download_url", "https://github.com")
@@ -88,6 +104,7 @@ class QuariumDashboard:
                         messagebox.showwarning("Critical Update Declined", "You have declined a Critical update. The software may become unstable or fail to sync correctly.")
         except Exception as e:
             print("Update check failed (this is normal if offline or URL is invalid):", e)
+            pass # Silently ignore update check failures to avoid console errors
         return True
 
     def load_local_config(self):
@@ -120,6 +137,11 @@ class QuariumDashboard:
             if os.path.exists(file_path):
                 try: os.remove(file_path)
                 except Exception: pass
+                
+        sync_state_path = os.path.join(BASE_DIR, 'sync_state.json')
+        if os.path.exists(sync_state_path):
+            try: os.remove(sync_state_path)
+            except Exception: pass
 
     def apply_profile(self, comp_name, config):
         self.clean_local_workspace()
@@ -356,6 +378,10 @@ class QuariumDashboard:
                 try:
                     if hasattr(app, 'conn'): app.conn.close()
                 except Exception: pass
+        sync_state_path = os.path.join(BASE_DIR, 'sync_state.json')
+        if os.path.exists(sync_state_path):
+            try: os.remove(sync_state_path)
+            except Exception: pass
                 
         self._show_progress_dialog("Syncing", "Downloading latest databases...")
         if self.drive_sync:
@@ -520,7 +546,7 @@ class QuariumDashboard:
     def enforce_read_only_mode(self):
         self.root.title("Quarium Dashboard [READ-ONLY MODE]")
         if hasattr(self, 'status_label') and self.status_label.winfo_exists():
-            self.status_label.config(text="● READ-ONLY", fg="#D32F2F")
+            self.status_label.config(text="● READ-ONLY", bg="#FFFFFF", fg="#D32F2F")
         if hasattr(self, 'request_edit_btn') and self.request_edit_btn.winfo_exists():
             self.request_edit_btn.pack(after=self.status_label, fill="x", pady=(0, 15), ipady=3)
         for app in self.apps.values():
@@ -531,7 +557,7 @@ class QuariumDashboard:
     def enable_read_write_mode(self):
         self.root.title("Quarium Dashboard")
         if hasattr(self, 'status_label') and self.status_label.winfo_exists():
-            self.status_label.config(text="● EDITING", fg="#2E7D32")
+            self.status_label.config(text="● EDITING", bg="#FFFFFF", fg="#2E7D32")
         if hasattr(self, 'request_edit_btn') and self.request_edit_btn.winfo_exists():
             self.request_edit_btn.pack_forget()
         for app in self.apps.values():
@@ -603,7 +629,7 @@ class QuariumDashboard:
         COLOR_WHITE = "#FFFFFF"
         COLOR_LIGHT_GRAY = "#F0F0F0"
         COLOR_TEXT = "#000000"
-        COLOR_PRIMARY_LIGHT = "#3E84B3" # Lighter shade for hover
+        COLOR_PRIMARY_LIGHT = "#3E84B3"
 
         # Use 'clam' as a base theme for better customization
         style.theme_use("clam")
@@ -669,8 +695,11 @@ class QuariumDashboard:
 
         # Notebook (Tabs)
         style.configure("TNotebook", background=COLOR_WHITE, borderwidth=0)
-        style.configure("TNotebook.Tab", background=COLOR_LIGHT_GRAY, foreground=COLOR_TEXT, padding=[10, 5], borderwidth=0)
-        style.map("TNotebook.Tab", background=[("selected", COLOR_PRIMARY)], foreground=[("selected", COLOR_WHITE)])
+        style.configure("TNotebook.Tab", background=COLOR_LIGHT_GRAY, foreground=COLOR_TEXT, padding=[15, 6], borderwidth=0)
+        style.map("TNotebook.Tab", 
+                  background=[("selected", COLOR_PRIMARY)], 
+                  foreground=[("selected", COLOR_WHITE)],
+                  padding=[("!selected", [15, 2])])
         
         # LabelFrame
         style.configure("TLabelframe", background=COLOR_WHITE, borderwidth=1, relief="solid")
@@ -715,6 +744,7 @@ class QuariumDashboard:
         app_definitions = [
             ("Projects", "Project Manager", ProjectManager, {'current_user': self.current_user}),
             ("Flow", "Project Flow", ProjectFlowManager, {'current_user': self.current_user}),
+            ("Finances", "Finances & Contracts", FinancesManager, {'current_user': self.current_user}),
             ("Clients", "Client Manager", ClientManager, {'current_user': self.current_user}),
             ("Services", "Service Manager", ServiceManager, {'current_user': self.current_user}),
             ("Stock", "Stock Manager", StockManager, {'on_edit_composite': self.open_composite_editor, 'current_user': self.current_user}),
@@ -725,14 +755,14 @@ class QuariumDashboard:
         
         # Create navigation buttons and app frames
         for app_id, title, app_class, kwargs in app_definitions:
-            # Navigation button (acting like a tab using the Toolbutton style)
+            # Navigation button
             btn = ttk.Radiobutton(
                 sidebar, 
                 text=title, 
                 variable=self.current_view, 
                 value=app_id,
                 style="Toolbutton",
-                command=self.switch_view
+                command=self.switch_view,
             )
             btn.pack(fill="x", pady=5, ipady=5)
             
@@ -825,6 +855,8 @@ class QuariumDashboard:
         elif view_id == "Projects":
             app.load_all_data()
         elif view_id == "Flow":
+            app.load_data()
+        elif view_id == "Finances" and FinancesManager:
             app.load_data()
         elif view_id == "Stock":
             app.refresh_tree()
@@ -934,7 +966,7 @@ class QuariumDashboard:
     def open_settings(self):
         dialog = tk.Toplevel(self.root)
         dialog.title("Settings")
-        dialog.geometry("650x500")
+        dialog.geometry("850x600")
         dialog.transient(self.root)
         dialog.grab_set()
 
@@ -950,7 +982,7 @@ class QuariumDashboard:
             except Exception: pass
 
         gen_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(gen_frame, text="General")
+        notebook.add(gen_frame, text="  General  ")
 
         ttk.Label(gen_frame, text="Dashboard Logo (QLogo.png):").grid(row=0, column=0, sticky="w", pady=5)
         ttk.Button(gen_frame, text="Select New Image", command=lambda: self._select_image('QLogo.png')).grid(row=0, column=1, padx=5, pady=5)
@@ -974,9 +1006,27 @@ class QuariumDashboard:
             messagebox.showinfo("Saved", "General settings saved.", parent=dialog)
 
         ttk.Button(gen_frame, text="Save General Settings", command=save_general).grid(row=3, column=0, columnspan=2, pady=15)
+        
+        def manual_update_check():
+            try:
+                req = urllib.request.Request(UPDATE_URL, headers={'User-Agent': 'QuariumApp/1.0'})
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    data = json.loads(response.read().decode())
+                
+                latest_version = data.get("version", CURRENT_VERSION)
+                def v_tuple(v): return tuple(map(int, (v.split('.'))))
+                
+                if v_tuple(latest_version) > v_tuple(CURRENT_VERSION):
+                    messagebox.showinfo("Update Available", f"Successfully connected!\n\nA new version ({latest_version}) is available.", parent=dialog)
+                else:
+                    messagebox.showinfo("Up to Date", f"Successfully connected!\n\nYou are on the latest version ({CURRENT_VERSION}).", parent=dialog)
+            except Exception as e:
+                messagebox.showerror("Connection Failed", f"Could not connect to the update server:\n{e}", parent=dialog)
+
+        ttk.Button(gen_frame, text="Check for Updates Now", command=manual_update_check).grid(row=4, column=0, columnspan=2, pady=5)
 
         users_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(users_frame, text="Users")
+        notebook.add(users_frame, text="  Users  ")
 
         user_tree = ttk.Treeview(users_frame, columns=("Full Name",), height=8)
         user_tree.heading("#0", text="Username")
@@ -1043,7 +1093,7 @@ class QuariumDashboard:
         ttk.Button(u_btn_frame, text="Edit Selected", command=edit_user).pack(side="left", padx=5)
 
         taxes_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(taxes_frame, text="Taxes")
+        notebook.add(taxes_frame, text="  Taxes  ")
 
         ttk.Label(taxes_frame, text="Profit Margin (%):").grid(row=0, column=0, sticky="w", pady=5)
         profit_var = tk.StringVar(value=str(settings.get("profit_margin", 0.0)))
@@ -1069,7 +1119,10 @@ class QuariumDashboard:
         ttk.Button(taxes_frame, text="Save Taxes Settings", command=save_taxes).grid(row=2, column=0, columnspan=2, pady=15)
 
         obs_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(obs_frame, text="Default Observations")
+        notebook.add(obs_frame, text="  Default Observations  ")
+        notebook.add(conn_frame, text="  Connection  ")
+        notebook.add(contract_frame, text="  Contract Layout  ")
+        notebook.add(conflicts_frame, text="  Sync Conflicts  ")
 
         ttk.Label(obs_frame, text="Saved Observations:").pack(anchor="w")
         obs_listbox = tk.Listbox(obs_frame, height=8)
@@ -1192,6 +1245,99 @@ class QuariumDashboard:
             self.logout_no_sync()
             
         ttk.Button(conn_frame, text="Disconnect from Company", command=do_disconnect, style="Accent.TButton").pack(pady=10)
+        
+        # Contract Layout Tab
+        contract_frame = ttk.Frame(notebook, padding=10)
+        notebook.add(contract_frame, text="Contract Layout")
+        
+        c_canvas = tk.Canvas(contract_frame, highlightthickness=0)
+        c_scroll = ttk.Scrollbar(contract_frame, orient="vertical", command=c_canvas.yview)
+        c_inner = ttk.Frame(c_canvas)
+        
+        c_inner.bind("<Configure>", lambda e: c_canvas.configure(scrollregion=c_canvas.bbox("all")))
+        c_canvas_window = c_canvas.create_window((0, 0), window=c_inner, anchor="nw")
+        
+        def on_c_canvas_configure(event):
+            c_canvas.itemconfig(c_canvas_window, width=event.width)
+        c_canvas.bind("<Configure>", on_c_canvas_configure)
+        
+        c_canvas.pack(side="left", fill="both", expand=True)
+        c_scroll.pack(side="right", fill="y")
+        c_canvas.configure(yscrollcommand=c_scroll.set)
+        
+        def_contratada = "<b>Contratada:</b> Quarium Consultoria em Biologia Analítica LTDA, pessoa jurídica de direito privado, inscrita no CNPJ 53.429.415/0001-41, com sede na Rua Maria Bicego, 323, Vila Santa Isabel, Campinas, SP. CEP: 13084-639, doravante denominada QUARIUM e neste ato representada por seu representante legal Lícia Carla da Silva Costa, Brasileira, Solteira, Bióloga, portadora do documento de identidade n° 56.727.423-8 emitido por SSP/SP, inscrito sob o CPF n° 086.388.957-39."
+        def_contratante = "<b>Contratante:</b> {name}, pessoa física, nacionalidade {nationality}, estado civil {marital_status}, profissão {profession}, portador(a) do documento de identidade n° {id_number}, emissor {id_issuer}, inscrito(a) sob o CPF n° {cpf_cnpj}. {additional_data} doravante denominada CONTRATANTE."
+        def_footer = "Quarium Consultoria em Biologia Analítica, Ltda. | Campinas, SP | Email: quarium.bio@gmail.com"
+        
+        ttk.Label(c_inner, text="Contratada Text:", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(0, 2))
+        contratada_txt = tk.Text(c_inner, height=4, width=80)
+        contratada_txt.pack(fill="x", pady=(0, 10))
+        contratada_txt.insert("1.0", settings.get("contract_contratada", def_contratada))
+        
+        ttk.Label(c_inner, text="Contratante Text (Placeholders: {name}, {nationality}, {marital_status}, {profession}, {id_number}, {id_issuer}, {cpf_cnpj}, {additional_data}):", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(0, 2))
+        contratante_txt = tk.Text(c_inner, height=4, width=80)
+        contratante_txt.pack(fill="x", pady=(0, 10))
+        contratante_txt.insert("1.0", settings.get("contract_contratante", def_contratante))
+        
+        ttk.Label(c_inner, text="Contract Footer Text:", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(0, 2))
+        c_footer_txt = tk.Text(c_inner, height=2, width=80)
+        c_footer_txt.pack(fill="x", pady=(0, 10))
+        c_footer_txt.insert("1.0", settings.get("contract_footer", settings.get("footer_text", def_footer)))
+        
+        ttk.Label(c_inner, text="Contract Body Template (.docx):", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(0, 2))
+        ttk.Label(c_inner, text="Upload a Word Document to be appended starting on page 2 of the generated contract.\nFormatting such as bold, italics, alignment, and indentation will be preserved.", foreground="gray").pack(anchor="w", pady=(0, 5))
+        
+        docx_status_var = tk.StringVar(value="Status: Not Uploaded")
+        if os.path.exists(os.path.join(BASE_DIR, 'ContractTemplate.docx')):
+            docx_status_var.set("Status: Template is currently uploaded.")
+            
+        ttk.Label(c_inner, textvariable=docx_status_var).pack(anchor="w", pady=(0, 5))
+        
+        def upload_docx():
+            file_path = filedialog.askopenfilename(filetypes=[("Word Document", "*.docx")])
+            if file_path:
+                try:
+                    import docx # test if installed
+                    shutil.copy(file_path, os.path.join(BASE_DIR, 'ContractTemplate.docx'))
+                    docx_status_var.set("Status: Template is currently uploaded.")
+                    if self.drive_sync:
+                        self.drive_sync.sync_up(['ContractTemplate.docx'])
+                    messagebox.showinfo("Success", "Contract template uploaded successfully!", parent=dialog)
+                except ImportError:
+                    messagebox.showerror("Dependency Missing", "The 'python-docx' library is required to read .docx files.\n\nPlease install it using:\npip install python-docx", parent=dialog)
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to upload template: {e}", parent=dialog)
+                    
+        ttk.Button(c_inner, text="Upload Contract Body (.docx)", command=upload_docx).pack(anchor="w", pady=(0, 10))
+
+        def gather_contract_settings():
+            return {
+                "contract_contratada": contratada_txt.get("1.0", tk.END).strip(),
+                "contract_contratante": contratante_txt.get("1.0", tk.END).strip(),
+                "contract_footer": c_footer_txt.get("1.0", tk.END).strip()
+            }
+            
+        def preview_contract():
+            temp_settings = settings.copy()
+            temp_settings.update(gather_contract_settings())
+            if "Finances" in self.apps and self.apps["Finances"]:
+                self.apps["Finances"].preview_contract_template(temp_settings)
+            else:
+                messagebox.showerror("Error", "Finances module not loaded.", parent=dialog)
+                
+        def save_contract_layout():
+            settings.update(gather_contract_settings())
+            with open(settings_path, 'w') as f:
+                json.dump(settings, f)
+            if self.drive_sync:
+                try: self.drive_sync.sync_up(['settings.json'])
+                except Exception: pass
+            messagebox.showinfo("Saved", "Contract Layout settings saved.", parent=dialog)
+            
+        c_btn_frame = ttk.Frame(c_inner)
+        c_btn_frame.pack(fill="x", pady=10)
+        ttk.Button(c_btn_frame, text="Validate / Preview PDF", command=preview_contract).pack(side="left", padx=5)
+        ttk.Button(c_btn_frame, text="Confirm & Save Settings", command=save_contract_layout, style="Accent.TButton").pack(side="left", padx=5)
 
         conflicts_frame = ttk.Frame(notebook, padding=10)
         notebook.add(conflicts_frame, text="Sync Conflicts")
@@ -1402,7 +1548,7 @@ class QuariumDashboard:
         ttk.Button(c_btn_frame, text="Delete from Cloud", command=delete_conflict).pack(side="left", padx=5)
 
         backup_frame = ttk.Frame(notebook, padding=10)
-        notebook.add(backup_frame, text="Data Backup")
+        notebook.add(backup_frame, text="  Data Backup  ")
         
         ttk.Label(backup_frame, text="Create or restore an encrypted backup of all system databases and images.", wraplength=500).pack(pady=10)
         

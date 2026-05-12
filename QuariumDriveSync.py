@@ -40,7 +40,22 @@ class DriveSyncManager:
         self.api_lock = threading.RLock()
         if not GOOGLE_API_AVAILABLE:
             raise ImportError("Google API client libraries are not installed. Please install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
+        self.sync_state_path = os.path.join(BASE_DIR, 'sync_state.json')
+        self._load_sync_state()
         self.authenticate()
+
+    def _load_sync_state(self):
+        if os.path.exists(self.sync_state_path):
+            try:
+                with open(self.sync_state_path, 'r') as f:
+                    self.file_versions = json.load(f)
+            except Exception: pass
+            
+    def _save_sync_state(self):
+        try:
+            with open(self.sync_state_path, 'w') as f:
+                json.dump(self.file_versions, f)
+        except Exception: pass
 
     def authenticate(self):
         token_path = os.path.join(BASE_DIR, 'token.json')
@@ -122,24 +137,33 @@ class DriveSyncManager:
     def upload_file(self, file_path, file_name, file_id=None):
         media = MediaFileUpload(file_path, resumable=True)
         if file_id:
-            self.service.files().update(fileId=file_id, media_body=media).execute()  # type: ignore
+            res = self.service.files().update(fileId=file_id, media_body=media, fields='id, modifiedTime').execute()  # type: ignore
         else:
             file_metadata = {'name': file_name, 'parents': ['appDataFolder']}
-            self.service.files().create(body=file_metadata, media_body=media, fields='id').execute()  # type: ignore
+            res = self.service.files().create(body=file_metadata, media_body=media, fields='id, modifiedTime').execute()  # type: ignore
+        return res.get('modifiedTime')
 
     def sync_down(self, filenames):
         with self.api_lock:
             files_in_drive = self.list_appdata_files()
+            changed = False
             for name in filenames:
                 if name in files_in_drive:
                     file_path = os.path.join(BASE_DIR, name)
+                    cloud_time = files_in_drive[name].get('modifiedTime')
+                    if os.path.exists(file_path) and self.file_versions.get(name) == cloud_time:
+                        continue # Skip download if already up to date
                     self.download_file(files_in_drive[name]['id'], file_path)
-                    self.file_versions[name] = files_in_drive[name]['modifiedTime']
+                    self.file_versions[name] = cloud_time
+                    changed = True
+            if changed:
+                self._save_sync_state()
 
     def sync_up(self, filenames, current_user="Unknown"):
         with self.api_lock:
             files_in_drive = self.list_appdata_files()
             conflicts = []
+            changed = False
             for name in filenames:
                 file_path = os.path.join(BASE_DIR, name)
                 if os.path.exists(file_path):
@@ -154,7 +178,13 @@ class DriveSyncManager:
                             self.upload_file(file_path, conflict_name, None)
                             conflicts.append(name)
                             continue
-                        self.upload_file(file_path, name, drive_file['id'])
+                        new_time = self.upload_file(file_path, name, drive_file['id'])
+                        self.file_versions[name] = new_time
+                        changed = True
                     else:
-                        self.upload_file(file_path, name, None)
+                        new_time = self.upload_file(file_path, name, None)
+                        self.file_versions[name] = new_time
+                        changed = True
+            if changed:
+                self._save_sync_state()
             return conflicts

@@ -59,6 +59,34 @@ except ImportError:
             def drawCentredString(self, *args, **kwargs): pass
             def drawRightString(self, *args, **kwargs): pass
 
+if REPORTLAB_AVAILABLE:
+    class NumberedCanvas(canvas.Canvas):
+        footer_text = "Quarium Consultoria em Biologia Analítica, Ltda. | Campinas, SP | Email: quarium.bio@gmail.com"
+        def __init__(self, *args, **kwargs):
+            canvas.Canvas.__init__(self, *args, **kwargs)
+            self._saved_page_states = []
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()  # type: ignore
+        def save(self):
+            num_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self.draw_page_number(num_pages)  # type: ignore
+                canvas.Canvas.showPage(self)  # type: ignore
+            canvas.Canvas.save(self)  # type: ignore
+        def draw_page_number(self, page_count):
+            self.setFont("Helvetica", 8)
+            self.setFillColor(colors.grey)
+            self.drawRightString(A4[0] - 2.0 * cm, A4[1] - 1.0 * cm, f"Página {self._pageNumber} de {page_count}")
+            lines = self.footer_text.replace('\\n', '\n').splitlines()
+            y_pos = 1.0 * cm + (len(lines) - 1) * 10
+            for line in lines:
+                self.drawCentredString(A4[0] / 2.0, y_pos, line.strip())
+                y_pos -= 10
+else:
+    NumberedCanvas = None
+
 if getattr(sys, 'frozen', False):
     BASE_DIR = os.path.dirname(sys.executable)
 else:
@@ -84,7 +112,7 @@ class ProjectFlowManager:
         self.trees = {}
         self.init_db()
         self.create_ui()
-        self.load_data()
+        # Startup speedup: Data loading deferred to switch_view
         
     def init_db(self):
         self.conn = sqlite3.connect(self.db_path)
@@ -109,6 +137,24 @@ class ProjectFlowManager:
         except sqlite3.OperationalError: pass
         try: self.cursor.execute('ALTER TABLE project_services ADD COLUMN lab_notebook TEXT')
         except sqlite3.OperationalError: pass
+            
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS contracts (
+                id INTEGER PRIMARY KEY,
+                client_id INTEGER,
+                total_cost REAL,
+                generated_at TEXT,
+                generated_by TEXT
+            )
+        ''')
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS contract_projects (
+                contract_id INTEGER,
+                project_id INTEGER,
+                FOREIGN KEY (contract_id) REFERENCES contracts (id) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
+            )
+        ''')
             
         self.conn.commit()
 
@@ -589,6 +635,36 @@ class ProjectFlowManager:
         tab_finances = ttk.Frame(notebook, padding=20)
         notebook.add(tab_finances, text="Finances")
         
+        ttk.Label(tab_finances, text="Generated Contracts", font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(0, 5))
+        
+        hist_tree = ttk.Treeview(tab_finances, columns=("Date", "Issuer", "Total Cost", "Co-Included Projects"), show="headings", height=4)
+        hist_tree.heading("Date", text="Date Emitted")
+        hist_tree.heading("Issuer", text="Issuer")
+        hist_tree.heading("Total Cost", text="Total Cost")
+        hist_tree.heading("Co-Included Projects", text="Co-Included Projects")
+        hist_tree.column("Date", width=100)
+        hist_tree.column("Issuer", width=100)
+        hist_tree.column("Total Cost", width=100, anchor="e")
+        hist_tree.column("Co-Included Projects", width=250)
+        hist_tree.pack(fill="x", pady=(0, 15))
+        
+        self.cursor.execute('''
+            SELECT c.id, c.generated_at, c.generated_by, c.total_cost
+            FROM contracts c
+            JOIN contract_projects cp ON c.id = cp.contract_id
+            WHERE cp.project_id = ?
+            ORDER BY c.generated_at DESC
+        ''', (p_id,))
+        for c_id, g_at, g_by, t_cost in self.cursor.fetchall():
+            self.cursor.execute('SELECT p.estimate_number FROM projects p JOIN contract_projects cp ON p.id = cp.project_id WHERE cp.contract_id = ? AND p.id != ?', (c_id, p_id))
+            co_projs = [r[0] for r in self.cursor.fetchall()]
+            co_str = ", ".join(co_projs) if co_projs else "None"
+            date_str = datetime.strptime(g_at.split()[0], '%Y-%m-%d').strftime('%d/%m/%Y') if g_at else "Unknown"
+            cost_str = self.format_br_currency(t_cost) if t_cost else "R$ 0,00"
+            hist_tree.insert("", "end", values=(date_str, g_by, cost_str, co_str))
+            
+        ttk.Separator(tab_finances, orient="horizontal").pack(fill="x", pady=10)
+        
         self.cursor.execute('''
             SELECT status, invoice_sent, invoice_paid, invoice_paid_date, 
                    lnp_emitted, lnp_paid, lnp_paid_date 
@@ -850,29 +926,3 @@ class ProjectFlowManager:
             messagebox.showerror("Export Error", "Cannot generate file. Ensure the PDF is not open in another program.")
         except Exception as e:
             messagebox.showerror("Export Error", f"Could not generate PDF: {e}")
-
-if REPORTLAB_AVAILABLE:
-    class NumberedCanvas(canvas.Canvas):
-        footer_text = "Quarium Consultoria em Biologia Analítica, Ltda. | Campinas, SP | Email: quarium.bio@gmail.com"
-        def __init__(self, *args, **kwargs):
-            canvas.Canvas.__init__(self, *args, **kwargs)
-            self._saved_page_states = []
-        def showPage(self):
-            self._saved_page_states.append(dict(self.__dict__))
-            self._startPage()  # type: ignore
-        def save(self):
-            num_pages = len(self._saved_page_states)
-            for state in self._saved_page_states:
-                self.__dict__.update(state)
-                self.draw_page_number(num_pages)  # type: ignore
-                canvas.Canvas.showPage(self)  # type: ignore
-            canvas.Canvas.save(self)  # type: ignore
-        def draw_page_number(self, page_count):
-            self.setFont("Helvetica", 8)
-            self.setFillColor(colors.grey)
-            lines = self.footer_text.split('\n')
-            y_pos = 1.0 * cm + (len(lines) - 1) * 10
-            for line in lines:
-                self.drawCentredString(A4[0] / 2.0, y_pos, line.strip())
-                y_pos -= 10
-            self.drawRightString(A4[0] - 1.5 * cm, 1.0 * cm, f"Página {self._pageNumber} de {page_count}")  # type: ignore

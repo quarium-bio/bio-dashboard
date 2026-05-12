@@ -5,7 +5,7 @@ a = Analysis(
     ['QuariumDashboard.py'],
     pathex=[],
     binaries=[],
-    datas=[('QLogo.png', '.'), ('EstimateLogo.png', '.')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

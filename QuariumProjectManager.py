@@ -66,6 +66,34 @@ except ImportError:
             def drawCentredString(self, *args, **kwargs): pass
             def drawRightString(self, *args, **kwargs): pass
 
+if REPORTLAB_AVAILABLE:
+    class NumberedCanvas(canvas.Canvas):
+        footer_text = "Quarium Consultoria em Biologia Analítica, Ltda. | Campinas, SP | Email: quarium.bio@gmail.com"
+        def __init__(self, *args, **kwargs):
+            canvas.Canvas.__init__(self, *args, **kwargs)
+            self._saved_page_states = []
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()  # type: ignore
+        def save(self):
+            num_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self.draw_page_number(num_pages)  # type: ignore
+                canvas.Canvas.showPage(self)  # type: ignore
+            canvas.Canvas.save(self)  # type: ignore
+        def draw_page_number(self, page_count):
+            self.setFont("Helvetica", 8)
+            self.setFillColor(colors.grey)
+            self.drawRightString(A4[0] - 2.0 * cm, A4[1] - 1.0 * cm, f"Página {self._pageNumber} de {page_count}")
+            lines = self.footer_text.replace('\\n', '\n').splitlines()
+            y_pos = 1.0 * cm + (len(lines) - 1) * 10
+            for line in lines:
+                self.drawCentredString(A4[0] / 2.0, y_pos, line.strip())
+                y_pos -= 10
+else:
+    NumberedCanvas = None
+
 class ProjectManager:
     def __init__(self, root, current_user="Unknown"):
         self.root = root
@@ -83,8 +111,7 @@ class ProjectManager:
 
         self.init_db()
         self.create_ui()
-        self.load_all_data() # Load clients, services, users, projects
-        self.clear_form() # Start with a clean form for a new project
+        # Startup speedup: Data loading deferred to switch_view
 
         if isinstance(self.root, (tk.Tk, tk.Toplevel)):
             self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -343,6 +370,8 @@ class ProjectManager:
         self.load_users()
         self.load_saved_estimates()
         self.update_total_cost()
+        if not self.current_project_id:
+            self.clear_form()
         
     def load_settings(self):
         settings_path = os.path.join(BASE_DIR, 'settings.json')
@@ -1467,32 +1496,6 @@ class ProjectManager:
             
         except sqlite3.Error as e:
             messagebox.showerror("Database Error", f"Could not approve project: {e}")
-
-if REPORTLAB_AVAILABLE:
-    class NumberedCanvas(canvas.Canvas):
-        footer_text = "Quarium Consultoria em Biologia Analítica, Ltda. | Campinas, SP | Email: quarium.bio@gmail.com"
-        def __init__(self, *args, **kwargs):
-            canvas.Canvas.__init__(self, *args, **kwargs)
-            self._saved_page_states = []
-        def showPage(self):
-            self._saved_page_states.append(dict(self.__dict__))
-            self._startPage()  # type: ignore
-        def save(self):
-            num_pages = len(self._saved_page_states)
-            for state in self._saved_page_states:
-                self.__dict__.update(state)
-                self.draw_page_number(num_pages)  # type: ignore
-                canvas.Canvas.showPage(self)  # type: ignore
-            canvas.Canvas.save(self)  # type: ignore
-        def draw_page_number(self, page_count):
-            self.setFont("Helvetica", 8)
-            self.setFillColor(colors.grey)
-            lines = self.footer_text.split('\n')
-            y_pos = 1.0 * cm + (len(lines) - 1) * 10
-            for line in lines:
-                self.drawCentredString(A4[0] / 2.0, y_pos, line.strip())
-                y_pos -= 10
-            self.drawRightString(A4[0] - 1.5 * cm, 1.0 * cm, f"Página {self._pageNumber} de {page_count}")  # type: ignore
 
 if __name__ == "__main__":
     root = tk.Tk()

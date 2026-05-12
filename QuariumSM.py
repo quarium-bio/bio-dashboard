@@ -172,7 +172,7 @@ class StockManager:
         ttk.Button(button_frame, text="Update Composite Prices", command=self.update_composite_prices).pack(side="left", padx=5)
         
         self.tree.bind("<Button-1>", self.on_tree_click)
-        self.refresh_tree()
+        # Startup speedup: Data loading deferred to switch_view
     
     def on_tree_click(self, event):
         item = self.tree.identify('item', event.x, event.y)
